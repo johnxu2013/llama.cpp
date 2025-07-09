@@ -822,16 +822,22 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         cb(cur, "ffn_moe_weighted", il);
     }
 
+    ggml_tensor * cur_experts[LLAMA_MAX_EXPERTS];
+
+    // order the views before the adds
+    for (int i = 0; i < n_expert_used; ++i) {
+        cur_experts[i] = ggml_view_2d(ctx0, experts, n_embd, n_tokens, experts->nb[2], i*experts->nb[1]);
+
+        ggml_build_forward_expand(gf, cur_experts[i]);
+    }
+
     // aggregate experts
     ggml_tensor * moe_out = nullptr;
     for (int i = 0; i < n_expert_used; ++i) {
-        ggml_tensor * cur_expert = ggml_view_2d(ctx0, experts, n_embd, n_tokens,
-                experts->nb[2], i*experts->nb[1]);
-
         if (i == 0) {
-            moe_out = cur_expert;
+            moe_out = cur_experts[i];
         } else {
-            moe_out = ggml_add(ctx0, moe_out, cur_expert);
+            moe_out = ggml_add(ctx0, moe_out, cur_experts[i]);
         }
     }
 

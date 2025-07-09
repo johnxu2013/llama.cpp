@@ -126,6 +126,7 @@ typedef struct {
     uint64_t nb2;
     uint64_t nb3;
     uint64_t offs;
+    uint64_t o1[8];
 } ggml_metal_kargs_bin;
 
 typedef struct {

@@ -832,7 +832,8 @@ enum ggml_sort_order {
 // general-purpose kernel for addition, subtraction, multiplication and division of two tensors
 // pros: works for non-contiguous tensors, supports broadcast across all dims
 // cons: not very efficient
-kernel void kernel_add(
+template <int F>
+kernel void kernel_add_fuse_impl(
         constant ggml_metal_kargs_bin & args,
         device const char * src0,
         device const char * src1,
@@ -849,14 +850,37 @@ kernel void kernel_add(
     const int i11 = i01%args.ne11;
 
     device const char * src0_ptr = src0 + i03*args.nb03 + i02*args.nb02 + i01*args.nb01 + args.offs;
-    device const char * src1_ptr = src1 + i13*args.nb13 + i12*args.nb12 + i11*args.nb11;
     device       char * dst_ptr  = dst  + i03*args.nb3  + i02*args.nb2  + i01*args.nb1  + args.offs;
+
+    device const char * src1_ptr[F];
+    for (short j = 0; j < F; ++j) {
+        src1_ptr[j] = src1 + args.o1[j] + i13*args.nb13 + i12*args.nb12 + i11*args.nb11;
+    }
 
     for (int i0 = tpitg.x; i0 < args.ne0; i0 += ntg.x) {
         const int i10 = i0%args.ne10;
-        *((device float *)(dst_ptr + i0*args.nb0)) = *((device float *)(src0_ptr + i0*args.nb00)) + *((device float *)(src1_ptr + i10*args.nb10));
+
+        float res = *((device float *)(src0_ptr + i0*args.nb00));
+
+#pragma unroll
+        for (short j = 0; j < F; ++j) {
+            res += *((device float *)(src1_ptr[j] + i10*args.nb10));
+        }
+
+        *((device float *)(dst_ptr + i0*args.nb0)) = res;
     }
 }
+
+typedef decltype(kernel_add_fuse_impl<2>) kernel_add_fuse_t;
+
+template [[host_name("kernel_add")]]        kernel kernel_add_fuse_t kernel_add_fuse_impl<1>;
+template [[host_name("kernel_add_fuse_2")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<2>;
+template [[host_name("kernel_add_fuse_3")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<3>;
+template [[host_name("kernel_add_fuse_4")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<4>;
+template [[host_name("kernel_add_fuse_5")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<5>;
+template [[host_name("kernel_add_fuse_6")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<6>;
+template [[host_name("kernel_add_fuse_7")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<7>;
+template [[host_name("kernel_add_fuse_8")]] kernel kernel_add_fuse_t kernel_add_fuse_impl<8>;
 
 kernel void kernel_sub(
         constant ggml_metal_kargs_bin & args,
@@ -970,15 +994,45 @@ template [[host_name("kernel_repeat_i16")]] kernel kernel_repeat_t kernel_repeat
 
 // assumption: src1 is a row
 // broadcast src1 into src0
-kernel void kernel_add_row(
+template <short F>
+kernel void kernel_add_row_fuse_impl(
         constant ggml_metal_kargs_bin & args,
-        device const float4 * src0,
-        device const float4 * src1,
-        device       float4 * dst,
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
         uint tpig[[thread_position_in_grid]]) {
+
     const uint nb = args.ne00/4;
-    dst[tpig] = src0[tpig] + src1[tpig % nb];
+    const uint i  = tpig % nb;
+
+    device const float4 * src0_row = (device const float4 *) (src0);
+    device       float4 *  dst_row = (device       float4 *) (dst);
+
+    device const float4 * src1_row[F];
+    for (short j = 0; j < F; ++j) {
+        src1_row[j] = (device const float4 *) (src1 + args.o1[j]);
+    }
+
+    float4 res = src0_row[tpig];
+
+#pragma unroll(F)
+    for (short j = 0; j < F; ++j) {
+        res += src1_row[j][i];
+    }
+
+    dst_row[tpig] = res;
 }
+
+typedef decltype(kernel_add_row_fuse_impl<2>) kernel_add_row_fuse_t;
+
+template [[host_name("kernel_add_row")]]        kernel kernel_add_row_fuse_t kernel_add_row_fuse_impl<1>;
+template [[host_name("kernel_add_row_fuse_2")]] kernel kernel_add_row_fuse_t kernel_add_row_fuse_impl<2>;
+template [[host_name("kernel_add_row_fuse_3")]] kernel kernel_add_row_fuse_t kernel_add_row_fuse_impl<3>;
+template [[host_name("kernel_add_row_fuse_4")]] kernel kernel_add_row_fuse_t kernel_add_row_fuse_impl<4>;
+template [[host_name("kernel_add_row_fuse_5")]] kernel kernel_add_row_fuse_t kernel_add_row_fuse_impl<5>;
+template [[host_name("kernel_add_row_fuse_6")]] kernel kernel_add_row_fuse_t kernel_add_row_fuse_impl<6>;
+template [[host_name("kernel_add_row_fuse_7")]] kernel kernel_add_row_fuse_t kernel_add_row_fuse_impl<7>;
+template [[host_name("kernel_add_row_fuse_8")]] kernel kernel_add_row_fuse_t kernel_add_row_fuse_impl<8>;
 
 kernel void kernel_sub_row(
         constant ggml_metal_kargs_bin & args,
