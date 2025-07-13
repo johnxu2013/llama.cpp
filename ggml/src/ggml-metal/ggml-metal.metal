@@ -849,25 +849,25 @@ kernel void kernel_add_fuse_impl(
     const int i12 = i02%args.ne12;
     const int i11 = i01%args.ne11;
 
-    device const char * src0_ptr = src0 + i03*args.nb03 + i02*args.nb02 + i01*args.nb01 + args.offs;
-    device       char * dst_ptr  = dst  + i03*args.nb3  + i02*args.nb2  + i01*args.nb1  + args.offs;
+    device const float * src0_ptr = (device const float *) (src0 + i03*args.nb03 + i02*args.nb02 + i01*args.nb01 + args.offs);
+    device       float * dst_ptr  = (device       float *) (dst  + i03*args.nb3  + i02*args.nb2  + i01*args.nb1  + args.offs);
 
-    device const char * src1_ptr[F];
+    device const float * src1_ptr[F];
     for (short j = 0; j < F; ++j) {
-        src1_ptr[j] = src1 + args.o1[j] + i13*args.nb13 + i12*args.nb12 + i11*args.nb11;
+        src1_ptr[j] = (device const float *) (src1 + args.o1[j] + i13*args.nb13 + i12*args.nb12 + i11*args.nb11);
     }
 
     for (int i0 = tpitg.x; i0 < args.ne0; i0 += ntg.x) {
         const int i10 = i0%args.ne10;
 
-        float res = *((device float *)(src0_ptr + i0*args.nb00));
+        float res = src0_ptr[i0];
 
 #pragma unroll
         for (short j = 0; j < F; ++j) {
-            res += *((device float *)(src1_ptr[j] + i10*args.nb10));
+            res += src1_ptr[j][i10];
         }
 
-        *((device float *)(dst_ptr + i0*args.nb0)) = res;
+        dst_ptr[i0] = res;
     }
 }
 
