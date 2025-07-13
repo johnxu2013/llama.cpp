@@ -2353,9 +2353,12 @@ struct test_bin_bcast : public test_case {
     const ggml_type type;
     const std::array<int64_t, 4> ne;
     const std::array<int, 4> nr;
+    int nf; // number of fused ops, nf == 1 -> single op (no fusion)
+
+    bool run_whole_graph() override { return true; }
 
     std::string vars() override {
-        return VARS_TO_STR3(type, ne, nr);
+        return VARS_TO_STR4(type, ne, nr, nf);
     }
 
     size_t op_size(ggml_tensor * t) override {
@@ -2364,24 +2367,35 @@ struct test_bin_bcast : public test_case {
 
     test_bin_bcast(op_t op, ggml_type type = GGML_TYPE_F32,
             std::array<int64_t, 4> ne = {10, 10, 1, 1},
-            std::array<int, 4> nr = {1, 2, 1, 1})
-        : op(op), type(type), ne(ne), nr(nr) {}
+            std::array<int, 4> nr = {1, 2, 1, 1},
+            int nf = 1)
+        : op(op), type(type), ne(ne), nr(nr), nf(nf) {}
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
+        GGML_ASSERT(nf <= 8);
+
         ggml_tensor * a = ggml_new_tensor_4d(ctx, type, ne[0]*nr[0], ne[1]*nr[1], ne[2]*nr[2], ne[3]*nr[3]);
         ggml_set_name(a, "a");
 
-        ggml_tensor * b = ggml_new_tensor(ctx, type, 4, ne.data());
-        ggml_set_name(b, "b");
-
-        // The backward pass supports broadcasting only for GGML_ADD:
-        const bool grad_supported = op == ggml_add || ggml_are_same_shape(a, b);
-        if (grad_supported) {
-            ggml_set_param(a);
-            ggml_set_param(b);
+        ggml_tensor * b[8];
+        for (int i = 0; i < nf; ++i) {
+            b[i] = ggml_new_tensor(ctx, type, 4, ne.data());
+            ggml_set_name(b[i], (std::string("b") + std::to_string(i)).c_str());
         }
 
-        ggml_tensor * out = op(ctx, a, b);
+        // The backward pass supports broadcasting only for GGML_ADD:
+        const bool grad_supported = op == ggml_add && ggml_are_same_shape(a, b[0]) && nf == 1;
+        if (grad_supported) {
+            ggml_set_param(a);
+            ggml_set_param(b[0]);
+        }
+
+        ggml_tensor * out = a;
+
+        for (int i = 0; i < nf; ++i) {
+            out = op(ctx, out, b[i]);
+        }
+
         ggml_set_name(out, "out");
 
         return out;
@@ -5150,6 +5164,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         //add_test_bin_bcast(type, {3, 3, 2560, 1280}, {1, 1, 1, 1});
         //add_test_bin_bcast(type, {3, 3, 2560, 1280}, {2, 1, 1, 1});
     }
+
+    // fusion
+    test_cases.emplace_back(new test_bin_bcast(ggml_add, GGML_TYPE_F32, {10, 5, 4, 3}, {2, 1, 1, 1}, 2));
+    test_cases.emplace_back(new test_bin_bcast(ggml_add, GGML_TYPE_F32, {16, 5, 4, 3}, {1, 2, 1, 1}, 3));
+    test_cases.emplace_back(new test_bin_bcast(ggml_add, GGML_TYPE_F32, {10, 5, 4, 3}, {1, 1, 2, 1}, 4));
+    test_cases.emplace_back(new test_bin_bcast(ggml_add, GGML_TYPE_F32, {16, 5, 4, 3}, {1, 1, 1, 2}, 5));
+    test_cases.emplace_back(new test_bin_bcast(ggml_add, GGML_TYPE_F32, {10, 5, 4, 3}, {1, 1, 2, 2}, 6));
+    test_cases.emplace_back(new test_bin_bcast(ggml_add, GGML_TYPE_F32, {10, 5, 4, 3}, {1, 2, 2, 2}, 7));
+    test_cases.emplace_back(new test_bin_bcast(ggml_add, GGML_TYPE_F32, {16, 5, 4, 3}, {2, 2, 2, 2}, 8));
 
     test_cases.emplace_back(new test_add1());
     test_cases.emplace_back(new test_scale());
