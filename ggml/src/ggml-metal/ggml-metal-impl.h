@@ -241,7 +241,7 @@ typedef struct {
     float    max_bias;
     float    m0;
     float    m1;
-    int16_t  n_head_log2;
+    int32_t  n_head_log2;
     float    logit_softcap;
 } ggml_metal_kargs_flash_attn_ext;
 

@@ -55,6 +55,12 @@ static struct ggml_backend_metal_device_context {
     bool has_residency_sets;
     bool has_bfloat;
     bool use_bfloat;
+    bool use_fusion;
+
+    int debug_fusion;
+
+    // how many times a given op was fused
+    uint64_t fuse_cnt[GGML_OP_COUNT];
 
     size_t max_size;
 
@@ -69,6 +75,9 @@ static struct ggml_backend_metal_device_context {
     /*.has_residency_sets      =*/ false,
     /*.has_bfloat              =*/ false,
     /*.use_bfloat              =*/ false,
+    /*.use_fusion              =*/ true,
+    /*.debug_fusion            =*/ 0,
+    /*.fuse_cnt                =*/ { 0 },
     /*.max_size                =*/ 0,
     /*.name                    =*/ "",
 };
@@ -83,16 +92,14 @@ static id<MTLDevice> ggml_backend_metal_device_acq(struct ggml_backend_metal_dev
 
     if (ctx->mtl_device == nil) {
         ctx->mtl_device = MTLCreateSystemDefaultDevice();
-    }
 
-    if (ctx->mtl_device) {
         ctx->has_simdgroup_reduction  = [ctx->mtl_device supportsFamily:MTLGPUFamilyApple7];
         ctx->has_simdgroup_reduction |= [ctx->mtl_device supportsFamily:MTLGPUFamilyMetal3_GGML];
 
         ctx->has_simdgroup_mm = [ctx->mtl_device supportsFamily:MTLGPUFamilyApple7];
 
 #if defined(GGML_METAL_HAS_RESIDENCY_SETS)
-        ctx->has_residency_sets = getenv("GGML_METAL_NO_RESIDENCY") == NULL;
+        ctx->has_residency_sets = getenv("GGML_METAL_NO_RESIDENCY") == nil;
 #endif
 
         ctx->has_bfloat  = [ctx->mtl_device supportsFamily:MTLGPUFamilyMetal3_GGML];
@@ -103,6 +110,14 @@ static id<MTLDevice> ggml_backend_metal_device_acq(struct ggml_backend_metal_dev
 #else
         ctx->use_bfloat = false;
 #endif
+        ctx->use_fusion = getenv("GGML_METAL_FUSION_DISABLE") == nil;
+
+        {
+            const char * val = getenv("GGML_METAL_FUSION_DEBUG");
+            ctx->debug_fusion = val ? atoi(val) : 0;
+        }
+
+        memset(ctx->fuse_cnt, 0, sizeof(ctx->fuse_cnt));
 
         ctx->max_size = ctx->mtl_device.maxBufferLength;
 
@@ -122,6 +137,17 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
     ctx->mtl_device_ref_count--;
 
     if (ctx->mtl_device_ref_count == 0) {
+        if (ctx->debug_fusion > 0) {
+            for (int i = 0; i < GGML_OP_COUNT; i++) {
+                if (ctx->fuse_cnt[i] == 0) {
+                    continue;
+                }
+
+                // note: cannot use ggml_log here
+                fprintf(stderr, "%s: %s: %" PRIu64 "\n", __func__, ggml_op_name((enum ggml_op) i), ctx->fuse_cnt[i]);
+            }
+        }
+
         if (ctx->mtl_lock) {
             [ctx->mtl_lock release];
             ctx->mtl_lock = nil;
@@ -2123,7 +2149,7 @@ static int ggml_metal_encode_node(
                 // c[1] = add(c[0], b[1])
                 // c[2] = add(c[1], b[2])
                 // ...
-                {
+                if (ctx_dev->use_fusion) {
                     ops[0] = GGML_OP_ADD;
                     ops[1] = GGML_OP_ADD;
                     ops[2] = GGML_OP_ADD;
@@ -2156,10 +2182,16 @@ static int ggml_metal_encode_node(
                             break;
                         }
 
+                        ctx_dev->fuse_cnt[nodes[n_fuse + 1]->op]++;
+
                         args.o1[n_fuse + 1] = offs_fuse;
                     }
 
                     ++n_fuse;
+
+                    if (ctx_dev->debug_fusion > 1 && n_fuse > 1) {
+                        GGML_LOG_DEBUG("%s: fuse: ADD x %d\n", __func__, n_fuse);
+                    }
                 }
 
                 //GGML_LOG_INFO("%s: XXXXXXXXXXXXXXXXXXX n_fuse = %d\n", __func__, n_fuse);
@@ -4162,7 +4194,7 @@ static int ggml_metal_encode_node(
                 // d[0] = rms_norm(a)
                 // d[1] = mul(d[0], b)
                 // d[2] = add(d[1], c)
-                {
+                if (ctx_dev->use_fusion) {
                     ops[0] = GGML_OP_RMS_NORM;
                     ops[1] = GGML_OP_MUL;
                     ops[2] = GGML_OP_ADD;
@@ -4188,6 +4220,8 @@ static int ggml_metal_encode_node(
                             break;
                         }
 
+                        ctx_dev->fuse_cnt[nodes[n_fuse + 1]->op]++;
+
                         id_fuse[n_fuse] = ggml_metal_get_buffer(nodes[n_fuse + 1]->src[1], &offs_fuse[n_fuse]);
 
                         args.nef1[n_fuse + 1] = nodes[n_fuse + 1]->src[1]->ne[1];
@@ -4200,6 +4234,15 @@ static int ggml_metal_encode_node(
                     }
 
                     ++n_fuse;
+
+                    if (ctx_dev->debug_fusion > 1 && n_fuse > 1) {
+                        if (n_fuse == 2) {
+                            GGML_LOG_DEBUG("%s: fuse: RMS_NORM + MUL\n", __func__);
+                        }
+                        if (n_fuse == 3) {
+                            GGML_LOG_DEBUG("%s: fuse: RMS_NORM + MUL + ADD\n", __func__);
+                        }
+                    }
                 }
 
                 //GGML_LOG_INFO("%s: RRRRRRRRRRRRRRRRRRRRRRRRRRRRR n_fuse = %d\n", __func__, n_fuse);

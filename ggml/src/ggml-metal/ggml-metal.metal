@@ -2249,9 +2249,11 @@ kernel void kernel_rms_norm_fuse_impl(
     for (int i00 = tpitg.x; i00 < args.ne00_4; i00 += ntg.x) {
         if (F == 1) {
             y[i00] = (x[i00]*scale);
-        } else if (F == 2) {
+        }
+        if (F == 2) {
             y[i00] = (x[i00]*scale)*f0[i00];
-        } else if (F == 3) {
+        }
+        if (F == 3) {
             y[i00] = (x[i00]*scale)*f0[i00] + f1[i00];
         }
     }
