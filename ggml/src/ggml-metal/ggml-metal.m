@@ -138,13 +138,14 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
 
     if (ctx->mtl_device_ref_count == 0) {
         if (ctx->debug_fusion > 0) {
+            fprintf(stderr, "%s: fusion stats:\n", __func__);
             for (int i = 0; i < GGML_OP_COUNT; i++) {
                 if (ctx->fuse_cnt[i] == 0) {
                     continue;
                 }
 
                 // note: cannot use ggml_log here
-                fprintf(stderr, "%s: %s: %" PRIu64 "\n", __func__, ggml_op_name((enum ggml_op) i), ctx->fuse_cnt[i]);
+                fprintf(stderr, "%s: - %s: %" PRIu64 "\n", __func__, ggml_op_name((enum ggml_op) i), ctx->fuse_cnt[i]);
             }
         }
 
@@ -2194,8 +2195,6 @@ static int ggml_metal_encode_node(
                     }
                 }
 
-                //GGML_LOG_INFO("%s: XXXXXXXXXXXXXXXXXXX n_fuse = %d\n", __func__, n_fuse);
-
                 if (ggml_nelements(src1) == ne10 && ggml_is_contiguous(src1) && ne00 % 4 == 0 && ne10 % 4 == 0) {
                     GGML_ASSERT(ggml_is_contiguous(src0));
 
@@ -4244,8 +4243,6 @@ static int ggml_metal_encode_node(
                         }
                     }
                 }
-
-                //GGML_LOG_INFO("%s: RRRRRRRRRRRRRRRRRRRRRRRRRRRRR n_fuse = %d\n", __func__, n_fuse);
 
                 if (n_fuse > 1) {
                     id_dst = ggml_metal_get_buffer(nodes[n_fuse - 1], &offs_dst);
